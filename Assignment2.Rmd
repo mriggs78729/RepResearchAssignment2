@@ -1,0 +1,45 @@
+Storm Event Health and Economic Impact analysis
+==================================================
+---
+title: "Storm Event Health and Economic Impact analysis"
+author: "Michael R. Riggs"
+date: "August 13, 2014"
+output: html_document
+---
+
+This report uses the National Weather Service Severe Storm data to analyze the impact of various types of storm events on poplation health and identify which event typs have the highest economic impact.
+
+##Synopsis
+Summary of results in 10 sentences or less
+
+##Data Processing
+
+###Load project data
+(Data)[https://d396qusza40orc.cloudfront.net/repdata%2Fdata%2FStormData.csv] for the project was download from on `r date()`
+
+```{r LoadProjectData}
+projectDataURL <- "https://d396qusza40orc.cloudfront.net/repdata%2Fdata%2FStormData.csv.bz2"
+projectDataZip <- "StormData.csv.bz2"
+
+if(!file.exists(projectDataZip)) 
+  {
+    download.file(projectDataURL,projectDataZip,method="curl", quiet=TRUE)
+  }
+con <- bzfile(projectDataZip, "r")
+data <- read.csv(con, stringsAsFactors = FALSE)
+close(con)
+
+```
+###Process Data
+
+
+##Results
+
+
+You can also embed plots, for example:
+
+```{r, echo=FALSE}
+plot(cars)
+```
+
+Note that the `echo = FALSE` parameter was added to the code chunk to prevent printing of the R code that generated the plot.
