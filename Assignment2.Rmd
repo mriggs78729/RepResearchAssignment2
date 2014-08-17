@@ -1,5 +1,3 @@
-Storm Event Health and Economic Impact analysis
-==================================================
 ---
 title: "Storm Event Health and Economic Impact analysis"
 author: "Michael R. Riggs"
@@ -13,33 +11,227 @@ This report uses the National Weather Service Severe Storm data to analyze the i
 Summary of results in 10 sentences or less
 
 ##Data Processing
+### Initialization
+Define locations of data and documentation.
+
+```{r InitializeConstants}
+projectDataURL <- "https://d396qusza40orc.cloudfront.net/repdata%2Fdata%2FStormData.csv.bz2"
+docsURL <-"https://d396qusza40orc.cloudfront.net/repdata%2Fpeer2_doc%2Fpd01016005curr.pdf"
+eventTypeURL <- "https://github.com/mriggs78729/RepResearchAssignment2/EventTypes.csv"
+```
 
 ###Load project data
-(Data)[https://d396qusza40orc.cloudfront.net/repdata%2Fdata%2FStormData.csv] for the project was download from on `r date()`
+
+[Data](`r projectDataURL`] for the project was download from on `r date()`.  All analysis was conducted using the NWS [documentation](`r docsURL`) for this data set.
+
 
 ```{r LoadProjectData}
-projectDataURL <- "https://d396qusza40orc.cloudfront.net/repdata%2Fdata%2FStormData.csv.bz2"
-projectDataZip <- "StormData.csv.bz2"
 
+projectDataZip <- "StormData.csv.bz2"
 if(!file.exists(projectDataZip)) 
   {
-    download.file(projectDataURL,projectDataZip,method="curl", quiet=TRUE)
+    download.file(projectDataURL,projectDataZip,method="curl")
   }
 con <- bzfile(projectDataZip, "r")
-data <- read.csv(con, stringsAsFactors = FALSE)
+data <- read.csv(con)
 close(con)
+```
+
+###Filter by relavant data
+The source data set contains `r nrow(data)` observations.  To clean the data, the first step is to elimnate data that has no bearing on the study.  To do this, select the  columns where values are non-zero for the columns CROPDMG, PROPDMG, BGN_DATE,FATALITIES or INJURIES and include the EVTYPE column.
+
+```r{cleanColumnsAndEvents}
+columnsOfInterest <- c("EVTYPE","FATALITIES","INJURIES", "CROPDMG", "CROPDMGEXP", "PROPDMG", "PROPDMGEXP")
+
+relevantData <- subset(data, FATALITIES>0 | INJURIES >0| CROPDMG>0 | PROPDMG>0 , select = columnsOfInterest)
+
+###Calculate Total Damage
+
+In the documentation, PROPDMGEXP and CROPDMGEXP contains the order of magnitude of the damage 
+alue in the PROPDMG and CROPDMG fields.  The documentation defines the following variables:
+-"K""   -1E3 or Thousands of dollars
+-"M"    -1E6 or Millions of dollars
+-"B"    -1E9 or Billions of dollars
+
+As seen in the following table, there are other variables used in the data:
+```{r ShowDamageExponents}
+table(data$PROPDMGEXP)
+table(data$CROPDMGEXP)
+```
+Since values other than "K","M" and "B" are not defined in the documentation, the numeric values are assumed to be the order of magnitude of the dollar value.  That is a "5" indicates the scale factor 10^5 or $10000 as an example.  The "K","M" and "B"  values are replaced with their respective order of magnitue values of 3, 6, 9. The case of the scale is ignored so "k" and "K" are equivalent.
+
+To convert the crop and property damage to a dollar value,  create a string with damage scalar value concatented with an "E" followed by the order of magnitude.  This value is then cast to a numeric which is the value in dollars.  For non-numeric exponents, the magnitude is set to zero.  
+
+```{r calculateDamageAndCasulaties}
+#
+# Convert "K", "M" and "B" to their order of magnitude for PROPDMGEXP
+#
+relevantData$PROPDMGEXP <- gsub(pattern="[kK]", x=relevantData$PROPDMGEXP,replacement="3")
+relevantData$PROPDMGEXP <- gsub(pattern="[mM]", x=relevantData$PROPDMGEXP,replacement="6")
+relevantData$PROPDMGEXP <- gsub(pattern="[bB]", x=relevantData$PROPDMGEXP,replacement="9")
+
+#
+# propertyDamage is set to the property damage in dollars
+#
+numChars <- as.character(seq(0,9))
+relevantData$propertyDamage<- as.numeric(
+    sprintf("%fE%s",relevantData$PROPDMG,
+            ifelse(relevantData$PROPDMGEXP %in% numChars,relevantData$PROPDMGEXP,"0" )))
+#
+# Convert "K", "M" and "B" to their order of magnitude for CROPDMGEXP
+#
+relevantData$CROPDMGEXP <- gsub(pattern="[kK]", x=relevantData$CROPDMGEXP,replacement="3")
+relevantData$CROPDMGEXP <- gsub(pattern="[mM]", x=relevantData$CROPDMGEXP,replacement="6")
+relevantData$CROPDMGEXP <- gsub(pattern="[bB]", x=relevantData$CROPDMGEXP,replacement="9")
+#
+# cropDamage is set to the crop damage in dollars 
+#
+relevantData$cropDamage<- as.numeric(
+    sprintf("%fE%s",relevantData$CROPDMG,
+            ifelse(relevantData$CROPDMGEXP %in% numChars,relevantData$CROPDMGEXP,"0" ))
+#
+#totalDamage is the sum of crop and property damage
+#
+relevantData$totalDamage <-relevantData$cropDamage + relevantData$propertyDamage
+```
+
+####Calculate Casualties
+To clean the Injuries and Fatalities, calucate a sum variable of the two named "casualties"" to identify th enumber injured or killed in an event.
+
+```r{calculateCasualty}
+relevantData$casualties <-relevantData$FATALITIES + relevantData$INJURIES
+```
+
+####Clean Event Types
+The Event Types in the source dataset are also  inconsistent as compared to section 2.1.1 of the documentation.  A translation table was created to translate the source event types to compliant types.  To do this we store the translation table in github.  To fetch the data, define constants with the name and URL of the translation table.
+
+
+
+  To clean the event types, the table at `r eventTypeURL` was used to translate EVTYPE to allowable values.
+
+```r{CleanEvents}
+#
+# load the event type translation table
+#
+eventTypeCSV <- "EventTypes.csv"
+
+if(!file.exists(eventTypeCSV)) 
+  {
+    download.file(eventTypeURL,eventTypeCSV,method="curl")
+  }
+  eventTypes <- read.csv(eventTypeCSV, stringsAsFactors=FALSE)
+#
+#Convert EVTYPE to a string
+#
+  relevantData$EVTYPE<- as.character(relevantData$EVTYPE)
+  for (i in 1:nrow(eventTypes))
+  {
+    pattern <- eventTypes[[i,1]]
+    replacement <- eventTypes[[i,2]]
+    isValid <- eventTypes[[i,3]]
+
+#
+# replace values in dataset were the Validity column==YES
+# delete rows were the Validit!=YES
+#
+    if (isValid=="YES")
+    {
+        replacementRows <- (relevantData$EVTYPE==pattern)
+        replaceCount <- sum(replacementRows)
+        if (!is.na(replaceCount))
+        {
+            message(sprintf("Replacing '%s' with '%s' in %d rows", pattern, replacement, replaceCount))
+            relevantData[replacementRows, "EVTYPE"] <- replacement
+        }
+    }
+    else
+    {
+        validRows <- (relevantData$EVTYPE!=pattern)
+        message(sprintf("Deleting %d rows with x%sx", nrow(relevantData)-sum(validRows), pattern))
+        relevantData <- relevantData[validRows,]
+    }
+    
+  }
+relevantData$EVTYPE <- as.factor(relevantData$EVTYPE )
 
 ```
-###Process Data
+###Summarize Data
+To derive the tidy data set for the study, the relevant data is filtered for events with casualties or non-zero totalDamage.  The data are stored in two dataframes to separate casualty and damage data.
+
+```{r ProcessProjectData}
+damageColumns <- c("EVTYPE","totalDamage")
+casualtyColumns <- c("EVTYPE","casualties")
+
+casualtyData <- subset(relevantData, casualties>0  , select = casualtyColumns)
+damageData <- subset(relevantData,totalDamage>0  , select = damageColumns)
+
+```
+
+The resultant data sets contain `r nrow(casualtyData)` rows with casualties and `r nrow(damageData)` with damages.
+
+The plyr package is used to sum total damage and casualties by EVTYPE.  The data is then sorted by decreasing impact for damage and casualties.
+
+```{r calculateImpacts}
+require(plyr)
+
+#
+# calculate total damage for each event type in millions
+#
+damageByEvent   <- ddply(damageData, .(EVTYPE),summarise, damage=sum(totalDamage)/1E6)
+#
+# sort by decreasing damage
+#
+damageByEvent <- damageByEvent[order(damageByEvent$damage, decreasing=TRUE),]
+#
+# make EVTYPE a factor variable for plotting
+#
+damageByEvent$EVTYPE <- factor(damageByEvent$EVTYPE, levels=damageByEvent$EVTYPE)
+
+
+#
+# calculate total casualties for each event type in millions
+#
+casualtyByEvent <- ddply(casualtyData, .(EVTYPE),summarise, casualties=sum(casualties))
+#
+# sort by decrasing casualty count
+#
+casualtyByEvent <- casualtyByEvent[order(casualtyByEvent$casualties, decreasing=TRUE),]
+#
+# make EVTYPE a factor variable for plotting
+#
+casualtyByEvent$EVTYPE <- factor(casualtyByEvent$EVTYPE, levels=casualtyByEvent$EVTYPE)
+
+```
 
 
 ##Results
+###Economic Impact
+The top 10 events by damage are: `r head(damageByEvent,n=10, addrownums=FALSE)`
 
+The following is a Pareto chart of the total damage by event type.
 
-You can also embed plots, for example:
+```{r calculateDamage}
 
-```{r, echo=FALSE}
-plot(cars)
+require(ggplot2)
+
+ggplot(damageByEvent[1:10,] , aes(x=EVTYPE)) +
+  geom_bar(aes(y=damage), fill="blue", stat="identity") +
+  xlab("Event Type")+
+  ylab("Total Damage ($M)") +
+  ggtitle("Total Property and Crop damage by Event Type")
 ```
 
-Note that the `echo = FALSE` parameter was added to the code chunk to prevent printing of the R code that generated the plot.
+###Health Impact
+The top 10 events by damage are: `r head(casualtyByEvent,n=10, addrownums=FALSE)`
+
+The following is a Pareto chart of the total casualties by event type.
+
+```{r showCasualties}
+
+ggplot(casualtyByEvent[1:10,] , aes(x=EVTYPE)) +
+  geom_bar(aes(y=casualties), fill="blue", stat="identity") +
+  xlab("Event Type")+
+  ylab("Total Casualties") +
+  ggtitle("Total Casualties by Event Type")
+```
+
